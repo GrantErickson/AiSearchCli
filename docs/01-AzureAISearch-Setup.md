@@ -137,7 +137,7 @@ Once deployed, go to the resource and record:
     "profiles": [
       {
         "name": "vector-profile",
-        "algorithmConfigurationName": "hnsw-algorithm"
+        "algorithm": "hnsw-algorithm"
       }
     ]
   },
@@ -149,7 +149,7 @@ Once deployed, go to the resource and record:
           "titleField": {
             "fieldName": "fileName"
           },
-          "contentFields": [
+          "prioritizedContentFields": [
             {
               "fieldName": "contentText"
             }
