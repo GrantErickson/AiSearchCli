@@ -1,0 +1,10 @@
+## Build outputs
+bin/
+obj/
+
+## Secrets — never commit
+appsettings.json
+
+## IDE
+.vs/
+*.user
