@@ -60,27 +60,25 @@ public class SearchService
       }
     };
 
-    var response = await _searchClient.SearchAsync<Azure.Search.Documents.Models.SearchDocument>(queryText, options);
+    var response = await _searchClient.SearchAsync<FileDocument>(queryText, options);
 
     var results = new List<SearchResult>();
     int rank = 1;
 
     await foreach (var result in response.Value.GetResultsAsync())
     {
+      var doc = result.Document;
       results.Add(new SearchResult
       {
         Rank = rank++,
         Score = result.Score ?? 0,
-        Id = result.Document["id"]?.ToString() ?? "",
-        FileName = result.Document["fileName"]?.ToString() ?? "",
-        FileType = result.Document["fileType"]?.ToString() ?? "",
-        FileSize = result.Document.TryGetValue("fileSize", out var size) ? Convert.ToInt64(size) : 0,
-        BlobUrl = result.Document["blobUrl"]?.ToString() ?? "",
-        UploadDate = result.Document.TryGetValue("uploadDate", out var date)
-              ? DateTimeOffset.Parse(date.ToString()!)
-              : DateTimeOffset.MinValue,
-        TextIncludedInSearch = result.Document.TryGetValue("textIncludedInSearch", out var textFlag)
-              && Convert.ToBoolean(textFlag)
+        Id = doc.Id,
+        FileName = doc.FileName,
+        FileType = doc.FileType,
+        FileSize = doc.FileSize,
+        BlobUrl = doc.BlobUrl,
+        UploadDate = doc.UploadDate,
+        TextIncludedInSearch = doc.TextIncludedInSearch
       });
     }
 
