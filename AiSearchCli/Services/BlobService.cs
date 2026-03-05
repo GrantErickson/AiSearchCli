@@ -32,6 +32,15 @@ public class BlobService
   }
 
   /// <summary>
+  /// Downloads a blob to a local file path.
+  /// </summary>
+  public async Task DownloadAsync(string blobName, string localPath)
+  {
+    var blobClient = _containerClient.GetBlobClient(blobName);
+    await blobClient.DownloadToAsync(localPath);
+  }
+
+  /// <summary>
   /// Deletes a blob by its GUID-based name.
   /// Returns true if deleted, false if not found.
   /// </summary>

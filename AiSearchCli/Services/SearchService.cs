@@ -1,5 +1,7 @@
 using Azure;
 using Azure.Search.Documents;
+using Azure.Search.Documents.Indexes;
+using Azure.Search.Documents.Indexes.Models;
 using Azure.Search.Documents.Models;
 using AiSearchCli.Models;
 
@@ -7,16 +9,75 @@ namespace AiSearchCli.Services;
 
 /// <summary>
 /// Handles all interactions with the Azure AI Search index:
-/// uploading documents, running hybrid + semantic searches, and deleting documents.
+/// creating the index, uploading documents, running hybrid + semantic searches, and deleting documents.
 /// </summary>
 public class SearchService
 {
   private readonly SearchClient _searchClient;
+  private readonly SearchIndexClient _indexClient;
+  private readonly string _indexName;
 
   public SearchService(AzureAISearchConfig config)
   {
     var credential = new AzureKeyCredential(config.AdminApiKey);
-    _searchClient = new SearchClient(new Uri(config.Endpoint), config.IndexName, credential);
+    _indexName = config.IndexName;
+    _indexClient = new SearchIndexClient(new Uri(config.Endpoint), credential);
+    _searchClient = _indexClient.GetSearchClient(_indexName);
+  }
+
+  /// <summary>
+  /// Creates or updates the search index based on the FileDocument model attributes.
+  /// Includes vector search (HNSW) and semantic ranking configuration.
+  /// </summary>
+  public async Task EnsureIndexAsync()
+  {
+    var fields = new FieldBuilder().Build(typeof(FileDocument));
+
+    var index = new SearchIndex(_indexName, fields)
+    {
+      VectorSearch = new VectorSearch
+      {
+        Algorithms =
+        {
+          new HnswAlgorithmConfiguration("hnsw-algorithm")
+          {
+            Parameters = new HnswParameters
+            {
+              M = 4,
+              EfConstruction = 400,
+              EfSearch = 500,
+              Metric = VectorSearchAlgorithmMetric.Cosine
+            }
+          }
+        },
+        Profiles =
+        {
+          new VectorSearchProfile("vector-profile", "hnsw-algorithm")
+        }
+      },
+      SemanticSearch = new SemanticSearch
+      {
+        Configurations =
+        {
+          new SemanticConfiguration("semantic-config", new SemanticPrioritizedFields
+          {
+            TitleField = new SemanticField("fileName"),
+            ContentFields = { new SemanticField("contentText") }
+          })
+        }
+      }
+    };
+
+    try
+    {
+      await _indexClient.DeleteIndexAsync(_indexName);
+    }
+    catch (RequestFailedException ex) when (ex.Status == 404)
+    {
+      // Index doesn't exist yet — that's fine
+    }
+
+    await _indexClient.CreateIndexAsync(index);
   }
 
   /// <summary>
@@ -88,8 +149,30 @@ public class SearchService
   }
 
   /// <summary>
+  /// Returns all documents in the index (metadata only, no vectors).
+  /// </summary>
+  public async Task<List<FileDocument>> GetAllDocumentsAsync()
+  {
+    var options = new SearchOptions
+    {
+      Size = 1000,
+      Select = { "id", "fileName", "fileType", "fileSize", "blobUrl", "blobName", "uploadDate", "contentText", "textIncludedInSearch" }
+    };
+
+    var response = await _searchClient.SearchAsync<FileDocument>("*", options);
+
+    var results = new List<FileDocument>();
+    await foreach (var result in response.Value.GetResultsAsync())
+    {
+      results.Add(result.Document);
+    }
+
+    return results;
+  }
+
+  /// <summary>
   /// Finds a document by its exact ID.
-  /// Returns null if not found.
+  /// Returns null if not found or if the ID contains invalid key characters.
   /// </summary>
   public async Task<FileDocument?> GetDocumentByIdAsync(string id)
   {
@@ -98,7 +181,7 @@ public class SearchService
       var response = await _searchClient.GetDocumentAsync<FileDocument>(id);
       return response.Value;
     }
-    catch (RequestFailedException ex) when (ex.Status == 404)
+    catch (RequestFailedException ex) when (ex.Status is 404 or 400)
     {
       return null;
     }

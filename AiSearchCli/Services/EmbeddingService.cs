@@ -77,6 +77,68 @@ public class EmbeddingService
     return await ParseVectorResponse(response);
   }
 
+  /// <summary>
+  /// Generates a text description of an image using the Azure AI Vision Image Analysis API.
+  /// Combines the main caption, dense captions, and tags into a single string.
+  /// </summary>
+  public async Task<string?> GenerateCaptionAsync(string filePath)
+  {
+    var url = $"{_endpoint}/computervision/imageanalysis:analyze?api-version=2024-02-01&features=caption,denseCaptions,tags";
+
+    var fileBytes = await File.ReadAllBytesAsync(filePath);
+    using var content = new ByteArrayContent(fileBytes);
+    content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+
+    using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+    request.Headers.Add("Ocp-Apim-Subscription-Key", _apiKey);
+
+    var response = await _httpClient.SendAsync(request);
+    response.EnsureSuccessStatusCode();
+
+    var json = await response.Content.ReadAsStringAsync();
+    using var doc = JsonDocument.Parse(json);
+
+    var parts = new List<string>();
+
+    // Main caption
+    if (doc.RootElement.TryGetProperty("captionResult", out var captionResult)
+        && captionResult.TryGetProperty("text", out var captionText))
+    {
+      parts.Add(captionText.GetString()!);
+    }
+
+    // Dense captions (regional descriptions)
+    if (doc.RootElement.TryGetProperty("denseCaptionsResult", out var denseResult)
+        && denseResult.TryGetProperty("values", out var denseValues))
+    {
+      foreach (var item in denseValues.EnumerateArray())
+      {
+        if (item.TryGetProperty("text", out var text))
+        {
+          var t = text.GetString()!;
+          if (!parts.Contains(t, StringComparer.OrdinalIgnoreCase))
+            parts.Add(t);
+        }
+      }
+    }
+
+    // Tags
+    if (doc.RootElement.TryGetProperty("tagsResult", out var tagsResult)
+        && tagsResult.TryGetProperty("values", out var tagValues))
+    {
+      var tagNames = new List<string>();
+      foreach (var tag in tagValues.EnumerateArray())
+      {
+        if (tag.TryGetProperty("name", out var name))
+          tagNames.Add(name.GetString()!);
+      }
+      if (tagNames.Count > 0)
+        parts.Add("Tags: " + string.Join(", ", tagNames));
+    }
+
+    return parts.Count > 0 ? string.Join(". ", parts) : null;
+  }
+
   private static async Task<float[]> ParseVectorResponse(HttpResponseMessage response)
   {
     var json = await response.Content.ReadAsStringAsync();

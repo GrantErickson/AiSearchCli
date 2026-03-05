@@ -35,6 +35,10 @@ try
       return await HandleSearch(args);
     case "remove":
       return await HandleRemove(args);
+    case "create-index":
+      return await HandleCreateIndex();
+    case "reindex":
+      return await HandleReindex();
     default:
       Console.Error.WriteLine($"Unknown command: {args[0]}");
       PrintUsage();
@@ -105,10 +109,21 @@ async Task<int> HandleAdd(string[] args)
   // 3. Extract text for full-text search (optional)
   string? contentText = null;
   bool textIncluded = false;
-  if (!noText && !EmbeddingService.IsImageFile(extension) && TextExtractor.CanExtractText(extension))
+  if (!noText)
   {
-    contentText = TextExtractor.ExtractText(file.FullName, extension);
-    textIncluded = !string.IsNullOrWhiteSpace(contentText);
+    if (EmbeddingService.IsImageFile(extension))
+    {
+      // Generate captions for images using Azure AI Vision
+      Console.Write("  Generating image captions... ");
+      contentText = await embeddingService.GenerateCaptionAsync(file.FullName);
+      textIncluded = !string.IsNullOrWhiteSpace(contentText);
+      Console.WriteLine("Done.");
+    }
+    else if (TextExtractor.CanExtractText(extension))
+    {
+      contentText = TextExtractor.ExtractText(file.FullName, extension);
+      textIncluded = !string.IsNullOrWhiteSpace(contentText);
+    }
   }
 
   // 4. Push to search index
@@ -224,6 +239,129 @@ async Task<int> HandleRemove(string[] args)
   return 1;
 }
 
+// ── Create-index command ──
+async Task<int> HandleCreateIndex()
+{
+  Console.Write("Creating/updating search index... ");
+  await searchService.EnsureIndexAsync();
+  Console.WriteLine("Done.");
+  Console.WriteLine($"  Index: {appConfig.AzureAISearch.IndexName}");
+  return 0;
+}
+
+// ── Reindex command ──
+async Task<int> HandleReindex()
+{
+  Console.WriteLine("Fetching all documents from index...");
+  var documents = await searchService.GetAllDocumentsAsync();
+
+  if (documents.Count == 0)
+  {
+    Console.WriteLine("No documents found in index.");
+    return 0;
+  }
+
+  Console.WriteLine($"Found {documents.Count} document(s).");
+
+  // Recreate the index so it's clean and matches the current schema
+  Console.Write("Recreating search index... ");
+  await searchService.EnsureIndexAsync();
+  Console.WriteLine("Done.");
+
+  Console.WriteLine("Re-processing all documents...");
+  Console.WriteLine();
+
+  int success = 0;
+  int failed = 0;
+
+  foreach (var doc in documents)
+  {
+    var tempPath = Path.Combine(Path.GetTempPath(), doc.BlobName);
+    try
+    {
+      Console.WriteLine($"Processing: {doc.FileName} ({doc.FileType})");
+
+      // Download from blob storage
+      Console.Write("  Downloading from blob... ");
+      await blobService.DownloadAsync(doc.BlobName, tempPath);
+      Console.WriteLine("Done.");
+
+      var extension = doc.FileType;
+
+      // Generate embeddings
+      Console.Write("  Generating embeddings... ");
+      float[] vector;
+      if (EmbeddingService.IsImageFile(extension))
+      {
+        vector = await embeddingService.VectorizeImageAsync(tempPath);
+      }
+      else
+      {
+        var text = TextExtractor.ExtractText(tempPath, extension);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+          Console.WriteLine("Skipped (no text could be extracted).");
+          failed++;
+          continue;
+        }
+        vector = await embeddingService.VectorizeTextAsync(text);
+      }
+      Console.WriteLine("Done.");
+
+      // Generate content text
+      string? contentText = null;
+      bool textIncluded = false;
+      if (EmbeddingService.IsImageFile(extension))
+      {
+        Console.Write("  Generating image captions... ");
+        contentText = await embeddingService.GenerateCaptionAsync(tempPath);
+        textIncluded = !string.IsNullOrWhiteSpace(contentText);
+        Console.WriteLine("Done.");
+      }
+      else if (TextExtractor.CanExtractText(extension))
+      {
+        contentText = TextExtractor.ExtractText(tempPath, extension);
+        textIncluded = !string.IsNullOrWhiteSpace(contentText);
+      }
+
+      // Update in index
+      Console.Write("  Updating index... ");
+      var updated = new FileDocument
+      {
+        Id = doc.Id,
+        FileName = doc.FileName,
+        FileType = doc.FileType,
+        FileSize = doc.FileSize,
+        BlobUrl = doc.BlobUrl,
+        BlobName = doc.BlobName,
+        UploadDate = doc.UploadDate,
+        ContentText = contentText,
+        ContentVector = vector,
+        TextIncludedInSearch = textIncluded
+      };
+      await searchService.UploadDocumentAsync(updated);
+      Console.WriteLine("Done.");
+      Console.WriteLine($"  Text indexed: {(textIncluded ? "Yes" : "No")}");
+
+      success++;
+    }
+    catch (Exception ex)
+    {
+      Console.Error.WriteLine($"  Error: {ex.Message}");
+      failed++;
+    }
+    finally
+    {
+      if (File.Exists(tempPath))
+        File.Delete(tempPath);
+    }
+  }
+
+  Console.WriteLine();
+  Console.WriteLine($"Re-index complete. {success} succeeded, {failed} failed.");
+  return failed > 0 ? 1 : 0;
+}
+
 // ── Helper methods ──
 
 async Task DeleteDocument(string id, string fileName, string blobName)
@@ -261,6 +399,8 @@ static void PrintUsage()
   Console.WriteLine("  aisearch add <filepath> [--no-text]    Add a file to the index and blob storage");
   Console.WriteLine("  aisearch search \"<query>\"              Search for matching files (top 10)");
   Console.WriteLine("  aisearch remove \"<filename-or-id>\"     Remove a file from index and blob storage");
+  Console.WriteLine("  aisearch create-index                  Create or update the search index");
+  Console.WriteLine("  aisearch reindex                       Re-process all documents (regenerate embeddings & captions)");
   Console.WriteLine();
   Console.WriteLine("Options:");
   Console.WriteLine("  --no-text    Skip adding extracted text to the full-text index (vector still generated)");
