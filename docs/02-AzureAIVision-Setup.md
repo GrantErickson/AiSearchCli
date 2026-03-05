@@ -60,7 +60,26 @@ Ocp-Apim-Subscription-Key: {api-key}
 }
 ```
 
-### Response Format (both endpoints)
+### Generate Image Captions
+
+When indexing images, the app also calls the Image Analysis 4.0 API to generate text descriptions (captions, dense captions, and tags). This text is stored in `contentText` so that images can be found via keyword and semantic search — not just vector similarity.
+
+```
+POST {endpoint}/computervision/imageanalysis:analyze?api-version=2024-02-01&features=caption,denseCaptions,tags
+Content-Type: application/octet-stream
+Ocp-Apim-Subscription-Key: {api-key}
+
+<binary image data>
+```
+
+The response includes:
+- **caption** — a single sentence describing the whole image
+- **denseCaptions** — descriptions of up to 10 regions within the image
+- **tags** — a list of detected visual concepts (e.g., "graph", "chart", "person")
+
+These are combined into a single text string and stored in the `contentText` field.
+
+### Vectorize Response Format (both endpoints)
 
 ```json
 {
