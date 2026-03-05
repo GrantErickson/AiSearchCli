@@ -97,11 +97,11 @@ dotnet run -- remove "a1b2c3d4-5678-9abc-def0-123456789abc"
 
 ### Commands
 
-| Command | Description |
-|---|---|
+| Command                      | Description                                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `add <filepath> [--no-text]` | Upload file to Blob Storage, generate embeddings, and index. `--no-text` skips adding extracted text to the keyword index. |
-| `search "<query>"` | Hybrid vector + keyword search with semantic ranking. Returns top 10 results. |
-| `remove "<filename-or-id>"` | Remove a file from the index and Blob Storage. If multiple files share a name, you'll be prompted to use the document ID. |
+| `search "<query>"`           | Hybrid vector + keyword search with semantic ranking. Returns top 10 results.                                              |
+| `remove "<filename-or-id>"`  | Remove a file from the index and Blob Storage. If multiple files share a name, you'll be prompted to use the document ID.  |
 
 ## Project Structure
 
