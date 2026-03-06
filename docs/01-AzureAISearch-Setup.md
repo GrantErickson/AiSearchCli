@@ -24,142 +24,24 @@ Once deployed, go to the resource and record:
 
 ## 3. Create the Index
 
-1. Go to **Search management → Indexes**.
-2. Click **Add index (JSON)**.
-3. Paste the following JSON and click **Save**:
+The index is defined in code via attributes on the `FileDocument` model class. To create or update it, run:
 
-```json
-{
-  "name": "file-index",
-  "fields": [
-    {
-      "name": "id",
-      "type": "Edm.String",
-      "key": true,
-      "filterable": true,
-      "searchable": false
-    },
-    {
-      "name": "fileName",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": true,
-      "sortable": true,
-      "facetable": false,
-      "retrievable": true
-    },
-    {
-      "name": "fileType",
-      "type": "Edm.String",
-      "searchable": false,
-      "filterable": true,
-      "sortable": false,
-      "facetable": true,
-      "retrievable": true
-    },
-    {
-      "name": "fileSize",
-      "type": "Edm.Int64",
-      "searchable": false,
-      "filterable": true,
-      "sortable": true,
-      "facetable": false,
-      "retrievable": true
-    },
-    {
-      "name": "blobUrl",
-      "type": "Edm.String",
-      "searchable": false,
-      "filterable": false,
-      "sortable": false,
-      "facetable": false,
-      "retrievable": true
-    },
-    {
-      "name": "blobName",
-      "type": "Edm.String",
-      "searchable": false,
-      "filterable": true,
-      "sortable": false,
-      "facetable": false,
-      "retrievable": true
-    },
-    {
-      "name": "uploadDate",
-      "type": "Edm.DateTimeOffset",
-      "searchable": false,
-      "filterable": true,
-      "sortable": true,
-      "facetable": false,
-      "retrievable": true
-    },
-    {
-      "name": "contentText",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": false,
-      "sortable": false,
-      "facetable": false,
-      "retrievable": true,
-      "analyzer": "en.microsoft"
-    },
-    {
-      "name": "contentVector",
-      "type": "Collection(Edm.Single)",
-      "searchable": true,
-      "retrievable": false,
-      "dimensions": 1024,
-      "vectorSearchProfile": "vector-profile"
-    },
-    {
-      "name": "textIncludedInSearch",
-      "type": "Edm.Boolean",
-      "searchable": false,
-      "filterable": true,
-      "sortable": false,
-      "facetable": false,
-      "retrievable": true
-    }
-  ],
-  "vectorSearch": {
-    "algorithms": [
-      {
-        "name": "hnsw-algorithm",
-        "kind": "hnsw",
-        "hnswParameters": {
-          "m": 4,
-          "efConstruction": 400,
-          "efSearch": 500,
-          "metric": "cosine"
-        }
-      }
-    ],
-    "profiles": [
-      {
-        "name": "vector-profile",
-        "algorithm": "hnsw-algorithm"
-      }
-    ]
-  },
-  "semantic": {
-    "configurations": [
-      {
-        "name": "semantic-config",
-        "prioritizedFields": {
-          "titleField": {
-            "fieldName": "fileName"
-          },
-          "prioritizedContentFields": [
-            {
-              "fieldName": "contentText"
-            }
-          ]
-        }
-      }
-    ]
-  }
-}
+```bash
+dotnet run -- create-index
 ```
+
+This creates the `file-index` with:
+- **Vector search** using HNSW (cosine metric, 1024 dimensions)
+- **Semantic ranking** with `fileName` as the title field and `contentText` as the content field
+- All field definitions (searchable, filterable, sortable, etc.) derived from `FileDocument` attributes
+
+If you need to re-process all existing documents (e.g., to regenerate embeddings or add image captions), run:
+
+```bash
+dotnet run -- reindex
+```
+
+This downloads each file from blob storage, regenerates embeddings and captions, and updates the index.
 
 ## 4. Index Fields Reference
 

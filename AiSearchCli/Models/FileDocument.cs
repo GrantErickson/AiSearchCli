@@ -1,11 +1,12 @@
 using System.Text.Json.Serialization;
 using Azure.Search.Documents.Indexes;
+using Azure.Search.Documents.Indexes.Models;
 
 namespace AiSearchCli.Models;
 
 /// <summary>
 /// Represents a document in the Azure AI Search index.
-/// Attributes define the index schema; JSON names match the camelCase field names.
+/// Attributes define the index schema so it can be created from code.
 /// </summary>
 public class FileDocument
 {
