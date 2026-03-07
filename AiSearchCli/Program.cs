@@ -20,6 +20,7 @@ if (args.Length == 0)
 var blobService = new BlobService(appConfig.AzureBlobStorage);
 var embeddingService = new EmbeddingService(appConfig.AzureAIVision);
 var searchService = new SearchService(appConfig.AzureAISearch);
+var chatService = new ChatService(appConfig.AzureOpenAI, searchService, embeddingService);
 
 long maxFileSize = appConfig.Settings.MaxFileSizeMB * 1024L * 1024L;
 
@@ -33,6 +34,8 @@ try
       return await HandleAdd(args);
     case "search":
       return await HandleSearch(args);
+    case "ask":
+      return await HandleAsk(args);
     case "remove":
       return await HandleRemove(args);
     case "create-index":
@@ -56,13 +59,76 @@ async Task<int> HandleAdd(string[] args)
 {
   if (args.Length < 2)
   {
-    Console.Error.WriteLine("Usage: aisearch add <filepath> [--no-text]");
+    Console.Error.WriteLine("Usage: aisearch add <file-or-folder> [--no-text]");
     return 1;
   }
 
-  var filePath = args[1];
+  var path = args[1];
   var noText = args.Any(a => a.Equals("--no-text", StringComparison.OrdinalIgnoreCase));
 
+  if (Directory.Exists(path))
+    return await HandleAddFolder(path, noText);
+
+  return await AddFileAsync(path, noText);
+}
+
+// ── Add folder ──
+async Task<int> HandleAddFolder(string folderPath, bool noText)
+{
+  var dir = new DirectoryInfo(folderPath);
+  var files = dir.GetFiles("*", SearchOption.AllDirectories);
+
+  if (files.Length == 0)
+  {
+    Console.WriteLine("No files found in folder.");
+    return 0;
+  }
+
+  Console.WriteLine($"Found {files.Length} file(s) in \"{dir.FullName}\".");
+  Console.WriteLine();
+
+  // Get existing filenames from the index to skip duplicates
+  Console.Write("Checking for duplicates... ");
+  var existingDocs = await searchService.GetAllDocumentsAsync();
+  var existingNames = new HashSet<string>(
+      existingDocs.Select(d => d.FileName),
+      StringComparer.OrdinalIgnoreCase);
+  Console.WriteLine("Done.");
+
+  int added = 0;
+  int skipped = 0;
+  int failed = 0;
+
+  foreach (var file in files)
+  {
+    if (existingNames.Contains(file.Name))
+    {
+      Console.WriteLine($"  Skipped (duplicate): {file.Name}");
+      skipped++;
+      continue;
+    }
+
+    Console.WriteLine();
+    var result = await AddFileAsync(file.FullName, noText);
+    if (result == 0)
+    {
+      existingNames.Add(file.Name);
+      added++;
+    }
+    else
+    {
+      failed++;
+    }
+  }
+
+  Console.WriteLine();
+  Console.WriteLine($"Folder complete. {added} added, {skipped} skipped (duplicate), {failed} failed.");
+  return failed > 0 ? 1 : 0;
+}
+
+// ── Add single file ──
+async Task<int> AddFileAsync(string filePath, bool noText)
+{
   var file = new FileInfo(filePath);
   if (!file.Exists)
   {
@@ -113,7 +179,6 @@ async Task<int> HandleAdd(string[] args)
   {
     if (EmbeddingService.IsImageFile(extension))
     {
-      // Generate captions for images using Azure AI Vision
       Console.Write("  Generating image captions... ");
       contentText = await embeddingService.GenerateCaptionAsync(file.FullName);
       textIncluded = !string.IsNullOrWhiteSpace(contentText);
@@ -189,17 +254,105 @@ async Task<int> HandleSearch(string[] args)
   return 0;
 }
 
+// ── Ask command ──
+async Task<int> HandleAsk(string[] args)
+{
+  if (args.Length < 2)
+  {
+    Console.Error.WriteLine("Usage: aisearch ask \"<question>\"");
+    return 1;
+  }
+
+  var question = args[1];
+
+  Console.WriteLine($"Question: \"{question}\"");
+  Console.WriteLine();
+
+  var result = await chatService.AskAsync(question);
+
+  Console.WriteLine();
+  if (result.IndexSources.Count > 0)
+  {
+    Console.WriteLine("Sources:");
+    foreach (var doc in result.IndexSources)
+    {
+      Console.WriteLine($"  [{doc.FileName}] {doc.BlobUrl}");
+    }
+  }
+
+  return 0;
+}
+
 // ── Remove command ──
 async Task<int> HandleRemove(string[] args)
 {
   if (args.Length < 2)
   {
-    Console.Error.WriteLine("Usage: aisearch remove \"<filename-or-id>\"");
+    Console.Error.WriteLine("Usage: aisearch remove <filename-or-id-or-folder>");
     return 1;
   }
 
   var identifier = args[1];
 
+  if (Directory.Exists(identifier))
+    return await HandleRemoveFolder(identifier);
+
+  return await RemoveSingleAsync(identifier);
+}
+
+// ── Remove folder ──
+async Task<int> HandleRemoveFolder(string folderPath)
+{
+  var dir = new DirectoryInfo(folderPath);
+  var fileNames = dir.GetFiles("*", SearchOption.AllDirectories)
+      .Select(f => f.Name)
+      .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+  if (fileNames.Count == 0)
+  {
+    Console.WriteLine("No files found in folder.");
+    return 0;
+  }
+
+  Console.WriteLine($"Found {fileNames.Count} file(s) in \"{dir.FullName}\". Matching against index...");
+
+  var allDocs = await searchService.GetAllDocumentsAsync();
+  var toRemove = allDocs.Where(d => fileNames.Contains(d.FileName)).ToList();
+
+  if (toRemove.Count == 0)
+  {
+    Console.WriteLine("No matching documents found in the index.");
+    return 0;
+  }
+
+  Console.WriteLine($"Removing {toRemove.Count} document(s)...");
+  Console.WriteLine();
+
+  int removed = 0;
+  int failed = 0;
+
+  foreach (var doc in toRemove)
+  {
+    try
+    {
+      await DeleteDocument(doc.Id, doc.FileName, doc.BlobName);
+      removed++;
+    }
+    catch (Exception ex)
+    {
+      Console.Error.WriteLine($"  Error removing {doc.FileName}: {ex.Message}");
+      failed++;
+    }
+  }
+
+  Console.WriteLine();
+  Console.WriteLine($"Folder removal complete. {removed} removed, {failed} failed.");
+  return failed > 0 ? 1 : 0;
+}
+
+// ── Remove single file ──
+async Task<int> RemoveSingleAsync(string identifier)
+{
   // First try to find by document ID
   var doc = await searchService.GetDocumentByIdAsync(identifier);
 
@@ -396,12 +549,15 @@ static void PrintUsage()
   Console.WriteLine("AiSearchCli — Add, search, and remove files from Azure AI Search");
   Console.WriteLine();
   Console.WriteLine("Usage:");
-  Console.WriteLine("  aisearch add <filepath> [--no-text]    Add a file to the index and blob storage");
-  Console.WriteLine("  aisearch search \"<query>\"              Search for matching files (top 10)");
-  Console.WriteLine("  aisearch remove \"<filename-or-id>\"     Remove a file from index and blob storage");
-  Console.WriteLine("  aisearch create-index                  Create or update the search index");
-  Console.WriteLine("  aisearch reindex                       Re-process all documents (regenerate embeddings & captions)");
+  Console.WriteLine("  aisearch add <file-or-folder> [--no-text]  Add a file or folder to the index");
+  Console.WriteLine("  aisearch search \"<query>\"                  Search for matching files (top 10)");
+  Console.WriteLine("  aisearch ask \"<question>\"                  Ask a question using AI with index context");
+  Console.WriteLine("  aisearch remove <file-id-or-folder>        Remove a file or folder from the index");
+  Console.WriteLine("  aisearch create-index                      Create or update the search index");
+  Console.WriteLine("  aisearch reindex                           Re-process all documents");
   Console.WriteLine();
   Console.WriteLine("Options:");
   Console.WriteLine("  --no-text    Skip adding extracted text to the full-text index (vector still generated)");
+  Console.WriteLine();
+  Console.WriteLine("Folder mode processes all files recursively. Duplicate filenames are skipped on add.");
 }

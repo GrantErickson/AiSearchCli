@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "AiSearchCli": {
+      "commandName": "Project",
+      "commandLineArgs": "ask \"Who are the main characters in moby dick\""
+    }
+  }
+}

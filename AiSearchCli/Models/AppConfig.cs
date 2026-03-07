@@ -8,6 +8,7 @@ public class AppConfig
   public AzureAISearchConfig AzureAISearch { get; set; } = new();
   public AzureAIVisionConfig AzureAIVision { get; set; } = new();
   public AzureBlobStorageConfig AzureBlobStorage { get; set; } = new();
+  public AzureOpenAIConfig AzureOpenAI { get; set; } = new();
   public SettingsConfig Settings { get; set; } = new();
 }
 
@@ -28,6 +29,13 @@ public class AzureBlobStorageConfig
 {
   public string ConnectionString { get; set; } = string.Empty;
   public string ContainerName { get; set; } = "files";
+}
+
+public class AzureOpenAIConfig
+{
+  public string Endpoint { get; set; } = string.Empty;
+  public string ApiKey { get; set; } = string.Empty;
+  public string DeploymentName { get; set; } = string.Empty;
 }
 
 public class SettingsConfig

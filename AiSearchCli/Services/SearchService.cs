@@ -147,6 +147,55 @@ public class SearchService
   }
 
   /// <summary>
+  /// Executes a hybrid search and returns document snippets with content text for RAG.
+  /// </summary>
+  public async Task<List<DocumentSnippet>> HybridSearchWithContentAsync(string queryText, float[] queryVector, int top = 5)
+  {
+    var options = new SearchOptions
+    {
+      Size = top,
+      QueryType = SearchQueryType.Semantic,
+      SemanticSearch = new SemanticSearchOptions
+      {
+        SemanticConfigurationName = "semantic-config",
+      },
+      Select =
+      {
+        "id", "fileName", "fileType", "blobUrl", "contentText"
+      },
+      VectorSearch = new VectorSearchOptions
+      {
+        Queries =
+        {
+          new VectorizedQuery(queryVector)
+          {
+            KNearestNeighborsCount = top,
+            Fields = { "contentVector" }
+          }
+        }
+      }
+    };
+
+    var response = await _searchClient.SearchAsync<FileDocument>(queryText, options);
+
+    var results = new List<DocumentSnippet>();
+
+    await foreach (var result in response.Value.GetResultsAsync())
+    {
+      var doc = result.Document;
+      results.Add(new DocumentSnippet
+      {
+        FileName = doc.FileName,
+        ContentText = doc.ContentText,
+        BlobUrl = doc.BlobUrl,
+        Score = result.Score ?? 0
+      });
+    }
+
+    return results;
+  }
+
+  /// <summary>
   /// Returns all documents in the index (metadata only, no vectors).
   /// </summary>
   public async Task<List<FileDocument>> GetAllDocumentsAsync()
