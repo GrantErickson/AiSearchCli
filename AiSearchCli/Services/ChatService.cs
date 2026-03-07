@@ -40,12 +40,29 @@ public class ChatService
       AIFunctionFactory.Create(
         async ([Description("The search query to find relevant documents")] string query) =>
         {
+          Console.ForegroundColor = ConsoleColor.DarkCyan;
+          Console.WriteLine($"  [Tool Call] SearchIndex(\"{query}\")");
+          Console.ResetColor();
+
           var vector = await _embeddingService.VectorizeTextAsync(query);
           var results = await _searchService.HybridSearchWithContentAsync(query, vector);
           indexSources.AddRange(results);
 
           if (results.Count == 0)
+          {
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("  [Tool Result] No documents found.");
+            Console.ResetColor();
             return "No documents found in the index for this query.";
+          }
+
+          Console.ForegroundColor = ConsoleColor.DarkCyan;
+          Console.WriteLine($"  [Tool Result] {results.Count} document(s) found:");
+          foreach (var doc in results)
+          {
+            Console.WriteLine($"    - {doc.FileName} (Score: {doc.Score:F3})");
+          }
+          Console.ResetColor();
 
           var sb = new StringBuilder();
           foreach (var doc in results)
